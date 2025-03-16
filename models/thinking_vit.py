@@ -1,13 +1,29 @@
 import torch
 import torchvision.models as models
-from torchvision import transforms
-import torch.nn.functional as F
+from .common import add_thought_sequence_to_input
 
+from .vit_source import vit_b_16 as local_vit_b_16
 
 class ThinkingViT(torch.nn.Module):
     def __init__(self, num_classes : int) -> None:
         super().__init__()
         self.vit: torch.nn.Module = models.vit_b_16()
+        self.thoughts = {}
+        self.mlp = torch.nn.Linear(1000, num_classes + 1)
+
+        for param in self.vit.parameters():
+            param.requires_grad = False
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.thoughts["logits"] = self.mlp(self.vit(x))
+        # Modified the encoder source code to return the last attention output
+        self.thoughts["last_attention_out"] = self.vit.encoder.layers[-1].out_attention[:, 0]
+        return torch.softmax(self.thoughts["logits"], dim=1)
+
+class ThinkingLocalViT(torch.nn.Module):
+    def __init__(self, num_classes : int) -> None:
+        super().__init__()
+        self.vit: torch.nn.Module = local_vit_b_16()
         self.thoughts = {}
         self.mlp = torch.nn.Linear(1000, num_classes + 1)
 
@@ -18,55 +34,59 @@ class ThinkingViT(torch.nn.Module):
         return torch.softmax(self.thoughts["logits"], dim=1)
 
 
-def reshape_tensor_with_padding_as_image(
-    tensor_to_reshape: torch.Tensor,
-) -> torch.Tensor:
-    batch_size = tensor_to_reshape.shape[0]
-    num_classes = tensor_to_reshape.shape[1]  # 1000 for ImageNet
+class ContinuousThinkingLocalViT(torch.nn.Module):
+    def __init__(self, num_classes : int, device: torch.device) -> None:
+        super().__init__()
+        self.vit: torch.nn.Module = local_vit_b_16()
+        self.thoughts = {}
+        self.thoughts_list = []
+        self.mlp = torch.nn.Linear(1000, num_classes + 1)
+        self.needs_to_think = False
+        self._forward_fn = self._act_fn
+        self.device = device
+    
+    def _think_fn(self, x: torch.Tensor) -> torch.Tensor:
+        self.encoder_input = self.vit.pre_process_encoder_input(x)
 
-    # Find a square that can fit all classes
-    side_len = int(num_classes**0.5)
-    if side_len**2 < num_classes:
-        side_len += 1  # Round up
+        if len(self.thoughts_list) > 0:
+            thoughts_tensor = torch.stack(self.thoughts_list).detach()
+        else:
+            # Handle empty case - maybe use zeros or skip thoughts
+            thoughts_tensor = torch.zeros_like(self.encoder_input)
 
-    # Pad logits to make it a perfect square
-    padding_needed = side_len**2 - num_classes
-    if padding_needed > 0:
-        padded_logits = torch.cat(
-            [
-                tensor_to_reshape,
-                torch.zeros(
-                    batch_size, padding_needed, device=tensor_to_reshape.device
-                ),
-            ],
-            dim=1,
-        )
-    else:
-        padded_logits = tensor_to_reshape
+        x = self.vit.encoder(add_thought_sequence_to_input(self.encoder_input, thoughts_tensor, self.device))
 
-    # Now we can safely reshape to a square
-    reshaped = padded_logits.reshape(batch_size, 1, side_len, side_len)
-    target_size = 224
+        # Classifier "token" as used by standard language architectures
+        x = x[:, 0]
 
-    # The rest of your padding code is correct
-    pad_h = target_size - side_len
-    pad_w = pad_h
-    pad_left = pad_w // 2
-    pad_right = pad_w - pad_left
-    pad_top = pad_h // 2
-    pad_bottom = pad_h - pad_top
+        x = self.vit.heads(x)
 
-    # This padding usage is correct
-    padded = F.pad(reshaped, (pad_left, pad_right, pad_top, pad_bottom))
-    return padded.repeat(1, 3, 1, 1)
+        self.thoughts["logits"] = self.mlp(x)
 
+        # Modified the encoder source code to return the last attention output
+        self.thoughts["last_attention_out"] = self.vit.encoder.layers[-1].out_attention[:, 0]
+        self.thoughts_list.append(self.thoughts["last_attention_out"])
 
-def get_vit_preprocessing() -> transforms.Compose:
-    return transforms.Compose(
-        [
-            transforms.Resize(224),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
+        return torch.softmax(self.thoughts["logits"], dim=1)
+    
+    def _act_fn(self, x: torch.Tensor) -> torch.Tensor:
+        self.thoughts["logits"] = self.mlp(self.vit(x))
+        # Modified the encoder source code to return the last attention output
+        self.thoughts["last_attention_out"] = self.vit.encoder.layers[-1].out_attention[:, 0]
+        self.thoughts_list.append(self.thoughts["last_attention_out"])
+        return torch.softmax(self.thoughts["logits"], dim=1)
+    
+    def think(self):
+        self.thoughts = {}
+        self.thoughts_list = []
+        self.needs_to_think = True
+        self._forward_fn = self._think_fn
+        
+    def act(self):
+        self.thoughts = {}
+        self.thoughts_list = []
+        self.needs_to_think = False
+        self._forward_fn = self._act_fn
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._forward_fn(x)

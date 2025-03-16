@@ -37,7 +37,7 @@ def train_model_to_think(
             flag = torch.any(torch.argmax(y_hat, dim=1)[-1] == thinking_class_index)
             while flag:
                 if counter == 0:
-                    print("Training: Started thinking...")
+                    print(f"Training: Started thinking... Loss: {L.item()}")
                 elif counter % 10 == 0:
                     print(f"Training: Still thinking, length of thoughts {counter} Loss: {L.item()}")
                 optimizer.zero_grad()
@@ -54,7 +54,7 @@ def train_model_to_think(
 
                 flag = torch.any(torch.argmax(y_hat, dim=1)[-1] == thinking_class_index)
                 if not flag:
-                    print(f"Training: Finished Thinking, thoughts length {counter}")
+                    print(f"Training: Finished Thinking, thoughts length {counter} Loss: {L.item()}")
             
             training_thought_lengths.append(counter)
 
@@ -107,10 +107,10 @@ if __name__ == "__main__":
     sys.path.insert(0, parentdir)
 
     from common import get_device
-    from models.thinking_vit import ThinkingViT, get_vit_preprocessing
+    from models.common import get_vit_preprocessing, reshape_tensor_with_padding_as_image
+    from models.thinking_vit import ThinkingViT, ThinkingLocalViT
     from data.data_modules import CRLeavesDataModule
     from models.loss import WeightedClassificationThinkingRewardLoss
-    from models.thinking_vit import reshape_tensor_with_padding_as_image
 
     device = get_device()
 
@@ -127,7 +127,7 @@ if __name__ == "__main__":
     data_module.prepare_data()
     data_module.create_data_loaders()
 
-    model = ThinkingViT(len(data_module.class_counts)).to(device)
+    model = ThinkingLocalViT(len(data_module.class_counts)).to(device)
     loss = WeightedClassificationThinkingRewardLoss(
         beta=1, gamma=1, epsilon=0.01, num_classes=len(data_module.class_counts), device=device, classification_weight=0.001
     )
