@@ -8,12 +8,12 @@ class ThinkingViT(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.vit: torch.nn.Module = models.vit_b_16()
-        self.logits = None
+        self.thoughts = {}
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.logits = self.vit(x)
+        self.thoughts["logits"] = self.vit(x)
         # Modified the encoder source code to return the last attention output
-        self.last_attention_out = self.vit.encoder.layers[-1].out_attention[:, 0]
+        self.thoughts["last_attention_out"] = self.vit.encoder.layers[-1].out_attention[:, 0]
         return torch.softmax(self.logits, dim=1)
 
 
