@@ -1,23 +1,24 @@
 import torch
 
+
 def train(
-    model : torch.nn.Module,
-    train_loader : torch.utils.data.DataLoader,
-    val_loader : torch.utils.data.DataLoader,
-    loss : torch.nn.Module,
-    optimizer : torch.optim.Optimizer,
-    epochs : int,
-    device : torch.device
+    model: torch.nn.Module,
+    train_loader: torch.utils.data.DataLoader,
+    val_loader: torch.utils.data.DataLoader,
+    loss: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    epochs: int,
+    device: torch.device,
 ):
     for epoch in range(epochs):
         model.train()
         train_loss = 0
-        
+
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)
+            y_hat = model(x)
 
             optimizer.zero_grad()
-            y_hat = model(x)
             l = loss(y_hat, y)
             l.backward()
             optimizer.step()
@@ -36,6 +37,7 @@ def train(
 
         print(f"Epoch {epoch} - Train loss: {train_loss} - Val loss: {val_loss}")
 
+
 if __name__ == "__main__":
     import os
     import sys
@@ -50,7 +52,8 @@ if __name__ == "__main__":
     from common import get_device
     from models.thinking_vit import ThinkingViT, get_vit_preprocessing
     from data.data_modules import CRLeavesDataModule
-
+    from models.loss import ThinkingReward
+    
     device = get_device()
 
     data_module = CRLeavesDataModule(
@@ -61,15 +64,18 @@ if __name__ == "__main__":
         indices_dir="indices/",
         sampling=None,
         train_transform=get_vit_preprocessing(),
-        test_transform=get_vit_preprocessing()
+        test_transform=get_vit_preprocessing(),
     )
     data_module.prepare_data()
     data_module.create_data_loaders()
 
     model = ThinkingViT().to(device)
-    loss = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    loss = ThinkingReward(
+        beta=1, gamma=0, epsilon=0.0001, num_classes=len(data_module.class_counts)
+    )
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    ## training 1 learn how to think baka
     train(
         model=model,
         train_loader=data_module.train_loader,
@@ -77,6 +83,5 @@ if __name__ == "__main__":
         loss=loss,
         optimizer=optimizer,
         epochs=10,
-        device=device
+        device=device,
     )
-
