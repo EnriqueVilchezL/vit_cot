@@ -5,16 +5,17 @@ import torch.nn.functional as F
 
 
 class ThinkingViT(torch.nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, num_classes : int) -> None:
         super().__init__()
         self.vit: torch.nn.Module = models.vit_b_16()
         self.thoughts = {}
+        self.mlp = torch.nn.Linear(1000, num_classes + 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        self.thoughts["logits"] = self.vit(x)
+        self.thoughts["logits"] = self.mlp(self.vit(x))
         # Modified the encoder source code to return the last attention output
         self.thoughts["last_attention_out"] = self.vit.encoder.layers[-1].out_attention[:, 0]
-        return torch.softmax(self.logits, dim=1)
+        return torch.softmax(self.thoughts["logits"], dim=1)
 
 
 def reshape_tensor_with_padding_as_image(
